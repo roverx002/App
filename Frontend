@@ -772,3 +772,107 @@ function BlogForm() {
 }
 
 export default BlogForm;
+
+Home.jsx
+import { useEffect, useState } from "react";
+import API from "../api";
+
+function Home() {
+
+    const [blogs, setBlogs] = useState([]);
+
+    const [page, setPage] = useState(1);
+
+    const [totalPages, setTotalPages] =
+        useState(1);
+
+    const getBlogs = async () => {
+
+        const response =
+            await API.get(
+                `blogs/?page=${page}`
+            );
+
+        setBlogs(
+            response.data.results
+        );
+
+        setTotalPages(
+            Math.ceil(
+                response.data.count / 5
+            )
+        );
+    };
+
+    useEffect(() => {
+
+        getBlogs();
+
+    }, [page]);
+
+    return (
+
+        <div>
+
+            <h2>
+                Latest Posts
+            </h2>
+
+            {
+
+                blogs.map((blog) => (
+
+                    <div
+                        key={blog.id}
+                    >
+
+                        <h3>
+                            {blog.title}
+                        </h3>
+
+                        <p>
+                            {blog.content}
+                        </p>
+
+                        <hr />
+
+                    </div>
+
+                ))
+
+            }
+
+            <button
+                disabled={page === 1}
+                onClick={() =>
+                    setPage(page - 1)
+                }
+            >
+                Prev
+            </button>
+
+            <span
+                style={{
+                    margin: "10px"
+                }}
+            >
+                {page}
+            </span>
+
+            <button
+                disabled={
+                    page === totalPages
+                }
+                onClick={() =>
+                    setPage(page + 1)
+                }
+            >
+                Next
+            </button>
+
+        </div>
+
+    );
+}
+
+export default Home;
