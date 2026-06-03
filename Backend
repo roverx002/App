@@ -1,0 +1,469 @@
+config/
+│
+├── settings.py
+├── urls.py
+│
+blog_app/
+│
+├── models.py
+├── serializers.py
+├── permissions.py
+├── pagination.py
+├── views.py
+├── urls.py
+│
+manage.py
+
+models.py
+from django.db import models
+from django.contrib.auth.models import User
+
+
+class Blog(models.Model):
+
+    title = models.CharField(
+        max_length=255
+    )
+
+    content = models.TextField()
+
+    author = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="blogs"
+    )
+
+    created_at = models.DateTimeField(
+        auto_now_add=True
+    )
+
+    updated_at = models.DateTimeField(
+        auto_now=True
+    )
+
+    def __str__(self):
+        return self.title
+
+
+serializers.py
+from rest_framework import serializers
+from django.contrib.auth.models import User
+from .models import Blog
+
+
+class RegisterSerializer(serializers.ModelSerializer):
+
+    password = serializers.CharField(
+        write_only=True
+    )
+
+    class Meta:
+        model = User
+
+        fields = [
+            "username",
+            "email",
+            "password"
+        ]
+
+    def create(self, validated_data):
+
+        return User.objects.create_user(
+            username=validated_data["username"],
+            email=validated_data["email"],
+            password=validated_data["password"]
+        )
+
+
+class BlogSerializer(serializers.ModelSerializer):
+
+    author = serializers.StringRelatedField(
+        read_only=True
+    )
+
+    class Meta:
+        model = Blog
+
+        fields = "__all__"
+
+
+
+pagination.py
+from rest_framework.pagination import PageNumberPagination
+
+
+class BlogPagination(
+    PageNumberPagination
+):
+
+    page_size = 5
+
+    page_size_query_param = "page_size"
+
+    max_page_size = 100
+
+
+
+permissions.py
+from rest_framework.permissions import BasePermission
+
+
+class IsOwnerOrReadOnly(
+    BasePermission
+):
+
+    def has_object_permission(
+        self,
+        request,
+        view,
+        obj
+    ):
+
+        if request.method in [
+            "GET",
+            "HEAD",
+            "OPTIONS"
+        ]:
+            return True
+
+        return obj.author == request.user
+
+
+views.py
+from django.contrib.auth.models import User
+from django.contrib.auth import authenticate
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+
+from rest_framework.permissions import (
+    IsAuthenticated,
+    AllowAny
+)
+
+from rest_framework_simplejwt.tokens import RefreshToken
+
+from .models import Blog
+from .serializers import (
+    RegisterSerializer,
+    BlogSerializer
+)
+
+from .permissions import (
+    IsOwnerOrReadOnly
+)
+
+from .pagination import BlogPagination
+
+class RegisterUser(APIView):
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+
+        serializer = RegisterSerializer(
+            data=request.data
+        )
+
+        if serializer.is_valid():
+
+            serializer.save()
+
+            return Response(
+                serializer.data,
+                status=status.HTTP_201_CREATED
+            )
+
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+class LoginUser(APIView):
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+
+        username = request.data.get("username")
+
+        password = request.data.get("password")
+
+        user = authenticate(
+            username=username,
+            password=password
+        )
+
+        if user:
+
+            refresh = RefreshToken.for_user(user)
+
+            return Response({
+
+                "refresh": str(refresh),
+
+                "access": str(
+                    refresh.access_token
+                )
+
+            })
+
+        return Response(
+            {
+                "message":
+                "Invalid Credentials"
+            },
+            status=401
+        )
+
+class BlogListCreate(
+    APIView
+):
+
+    pagination_class = BlogPagination
+
+    def get_permissions(self):
+
+        if self.request.method == "POST":
+            return [IsAuthenticated()]
+
+        return [AllowAny()]
+
+    def get(self, request):
+
+        blogs = Blog.objects.all().order_by(
+            "-created_at"
+        )
+
+        paginator = self.pagination_class()
+
+        page = paginator.paginate_queryset(
+            blogs,
+            request
+        )
+
+        serializer = BlogSerializer(
+            page,
+            many=True
+        )
+
+        return paginator.get_paginated_response(
+            serializer.data
+        )
+
+    def post(self, request):
+
+        serializer = BlogSerializer(
+            data=request.data
+        )
+
+        if serializer.is_valid():
+
+            serializer.save(
+                author=request.user
+            )
+
+            return Response(
+                serializer.data,
+                status=201
+            )
+
+        return Response(
+            serializer.errors,
+            status=400
+        )
+
+
+class BlogDetail(
+    APIView
+):
+
+    permission_classes = [
+        AllowAny
+    ]
+
+    def get(self, request, pk):
+
+        try:
+
+            blog = Blog.objects.get(
+                id=pk
+            )
+
+        except Blog.DoesNotExist:
+
+            return Response(
+                {
+                    "message":
+                    "Blog not found"
+                },
+                status=404
+            )
+
+        serializer = BlogSerializer(
+            blog
+        )
+
+        return Response(
+            serializer.data
+        )
+
+
+
+class BlogUpdate(
+    APIView
+):
+
+    permission_classes = [
+        IsAuthenticated
+    ]
+
+    def put(self, request, pk):
+
+        try:
+
+            blog = Blog.objects.get(
+                id=pk
+            )
+
+        except Blog.DoesNotExist:
+
+            return Response(
+                {
+                    "message":
+                    "Blog not found"
+                },
+                status=404
+            )
+
+        if blog.author != request.user:
+
+            return Response(
+                {
+                    "message":
+                    "Not allowed"
+                },
+                status=403
+            )
+
+        serializer = BlogSerializer(
+            blog,
+            data=request.data
+        )
+
+        if serializer.is_valid():
+
+            serializer.save(
+                author=request.user
+            )
+
+            return Response(
+                serializer.data
+            )
+
+        return Response(
+            serializer.errors,
+            status=400
+        )
+
+
+class BlogDelete(
+    APIView
+):
+
+    permission_classes = [
+        IsAuthenticated
+    ]
+
+    def delete(self, request, pk):
+
+        try:
+
+            blog = Blog.objects.get(
+                id=pk
+            )
+
+        except Blog.DoesNotExist:
+
+            return Response(
+                {
+                    "message":
+                    "Blog not found"
+                },
+                status=404
+            )
+
+        if blog.author != request.user:
+
+            return Response(
+                {
+                    "message":
+                    "Not allowed"
+                },
+                status=403
+            )
+
+        blog.delete()
+
+        return Response(
+            {
+                "message":
+                "Blog deleted"
+            },
+            status=204
+        )
+
+
+
+app/urls.py
+from django.urls import path
+
+from .views import (
+
+    RegisterAPIView,
+
+    LoginAPIView,
+
+    BlogListCreateAPIView,
+
+    BlogDetailAPIView,
+
+    BlogUpdateAPIView,
+
+    BlogDeleteAPIView
+
+)
+
+urlpatterns = [
+
+    path(
+        "register/",
+        RegisterAPIView.as_view()
+    ),
+
+    path(
+        "login/",
+        LoginAPIView.as_view()
+    ),
+
+    path(
+        "blogs/",
+        BlogListCreateAPIView.as_view()
+    ),
+
+    path(
+        "blogs/<int:pk>/",
+        BlogDetailAPIView.as_view()
+    ),
+
+    path(
+        "blogs/update/<int:pk>/",
+        BlogUpdateAPIView.as_view()
+    ),
+
+    path(
+        "blogs/delete/<int:pk>/",
+        BlogDeleteAPIView.as_view()
+    ),
+]
